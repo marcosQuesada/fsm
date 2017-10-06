@@ -24,7 +24,7 @@ type Guard func() bool
 type FSM struct {
 	currentState State
 	states       map[StateType]State
-	mutex        *sync.Mutex
+	mutex        *sync.RWMutex
 }
 
 func NewFSM(state State, states []State) *FSM {
@@ -32,19 +32,27 @@ func NewFSM(state State, states []State) *FSM {
 	for _, ss := range states {
 		s[ss.GetType()] = ss
 	}
+
 	return &FSM{
 		currentState: state,
 		states:       s,
-		mutex:        &sync.Mutex{},
+		mutex:        &sync.RWMutex{},
 	}
 }
 
 func (f *FSM) GetCurrentState() State {
+	f.mutex.RLock()
+	defer f.mutex.RUnlock()
+
 	return f.currentState
 }
 
 func (f *FSM) Boot() {
-	f.currentState.Enable()
+	f.mutex.Lock()
+	s := f.currentState
+	f.mutex.Unlock()
+
+	s.Enable()
 
 	t := f.GetTransitionReady()
 	if t == nil {
@@ -55,7 +63,11 @@ func (f *FSM) Boot() {
 }
 
 func (f *FSM) GetTransitionReady() *Transition {
-	for _, t := range f.currentState.Transitions() {
+	f.mutex.Lock()
+	s := f.currentState
+	f.mutex.Unlock()
+
+	for _, t := range s.Transitions() {
 
 		if f.PassGuards(t) {
 			return t
@@ -66,7 +78,11 @@ func (f *FSM) GetTransitionReady() *Transition {
 }
 
 func (f *FSM) DoTransition(t *Transition) {
-	f.currentState.Disable()
+	f.mutex.Lock()
+	s := f.currentState
+	f.mutex.Unlock()
+
+	s.Disable()
 
 	s, ok := f.states[t.To]
 	if !ok {
@@ -78,11 +94,15 @@ func (f *FSM) DoTransition(t *Transition) {
 	f.currentState = s
 	f.mutex.Unlock()
 
-	f.currentState.Enable()
+	s.Enable()
 }
 
 func (f *FSM) Terminate() {
-	f.currentState.Disable()
+	f.mutex.Lock()
+	s := f.currentState
+	f.mutex.Unlock()
+
+	s.Disable()
 }
 
 func (f *FSM) PassGuards(t *Transition) bool {
